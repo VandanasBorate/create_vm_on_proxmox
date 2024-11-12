@@ -3,4 +3,4 @@ Created functionality in the Python Flask app to send requests to the Proxmox AP
 Implemented a validation check where, if the VM ID is already present, a message stating "VM is already there" is displayed. Otherwise, a message indicating "VM created successfully" is shown.
 
 Run:
-python3 
+python3 python_flask_vm.py
