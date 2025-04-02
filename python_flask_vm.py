@@ -190,3 +190,111 @@ def create_vm():
 # Run the Flask app
 if __name__ == "__main__":
     app.run(debug=True)
+
+
+
+
+3)
+
+
+# Define the route for creating a VM
+@app.route('/create_vm', methods=['GET', 'POST'])
+def create_vm():
+    # Define the get_available_vmid function
+    PROXMOX_URL = "https://192.168.1.252:8006/api2/json"
+    TOKEN_ID = "pythonapi@pam!apipython"
+    TOKEN_SECRET = "8b13892c-c6e9-43c0-b128-3f17dd0f932a"
+    node_name  = "innprox-02"
+    headers = {
+        'Authorization': f'PVEAPIToken={TOKEN_ID}={TOKEN_SECRET}',
+        'Content-Type': 'application/json'
+    }
+     # Function to start the VM
+    def start_vm(vmid):
+        hostname = '192.168.1.252'
+        username = 'root'
+        private_key_path = '/home/innuser002/.ssh/id_rsa'
+        port = 22
+        
+        # SSH client setup
+        ssh_client = paramiko.SSHClient()
+        ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        private_key = RSAKey.from_private_key_file(private_key_path)
+        ssh_client.connect(hostname, port=port, username=username, pkey=private_key)
+
+        # Command to start the container/VM
+        stdin, stdout, stderr = ssh_client.exec_command(f'qm start {vmid}')
+        result = stdout.read().decode().strip()
+        error = stderr.read().decode()
+        ssh_client.close()
+
+        if error:
+            raise Exception(f"Error starting VM {vmid}: {error}")
+
+        return result
+
+    def get_available_vmid(node):
+        url = f"{PROXMOX_URL}/nodes/{node}/qemu"
+        try:
+            response = requests.get(url, headers=headers, verify=False)
+            if response.status_code == 200:
+                existing_vms = response.json()['data']
+                existing_vmids = [vm['vmid'] for vm in existing_vms]
+                vmid = 2008
+                while vmid in existing_vmids:
+                    vmid += 1
+                return vmid
+            else:
+                raise Exception("Failed to fetch existing VMs.")
+        except requests.RequestException as e:
+            raise Exception(f"Error fetching VM list from Proxmox: {str(e)}")
+
+    # Get the file_name parameter from the query string (for both GET and POST requests)
+    file_name = request.args.get('file_name')
+    print(f"Requested file: {file_name}")
+
+    # Check if the file exists at the specified location
+    file_path = f"/home/nfs_client/{file_name}"
+    if not os.path.exists(file_path):
+        message = f"File '{file_name}' does not exist at the specified location."
+        return render_template('create_vm.html', message=message)
+
+    # Proceed with the VM creation if file exists
+    vmid = get_available_vmid(node_name)  # Fetch VMID once for both GET and POST requests
+
+    if request.method == 'POST':
+        # Handle POST request for creating a VM
+        name = request.form['name']  # VM name
+        
+        # Create the clone payload with dynamic vmid
+        clone_payload = {
+            "newid": vmid,  # The ID for the new VM
+            "name": name,  # The name for the new VM
+            "full": 1,  # Perform a full clone
+            "storage": "storage1",  # Storage where the cloned disk will be created (adjust to your setup)
+        }
+
+        url = f"{PROXMOX_URL}/nodes/{node_name}/qemu/{file_name}/clone"
+        try:
+            response = requests.post(url, headers=headers, json=clone_payload, verify=False)
+            if response.status_code in [200, 202]:
+                message = "VM creation initiated successfully from the template!"  
+                 # Start the VM automatically after creation
+                try:
+                    start_vm(vmid)
+                    message += " The VM has been started automatically."
+                except Exception as e:
+                    message += f" However, there was an error starting the VM: {str(e)}"
+            else:
+                message = f"Failed to clone VM: {response.text}"
+        except requests.RequestException as e:
+            message = f"Network issues: {str(e)}"
+
+        return render_template('create_vm.html', message=message, vmid=vmid)
+
+    # For GET request, render the form with vmid and file_name
+    return render_template('create_vm.html', vmid=vmid, file_name=file_name)
+
+
+
+
